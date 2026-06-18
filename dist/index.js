@@ -118,25 +118,37 @@ uniform vec3 uColor1;
 uniform vec3 uColor2;
 uniform vec3 uColor3;
 uniform float uOpacity;
+uniform float uGrain;
+uniform float uTime;
 
 out vec4 fragColor;
+
+float rand(vec2 co) {
+  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
 
 void main() {
   vec3 col = mix(
     mix(uColor1, uColor2, smoothstep(-3.0, 3.0, vPos.x)),
     uColor3,
-    smoothstep(-3.0, 3.0, vPos.z)
+    vPos.z
   );
+  if (uGrain > 0.0) {
+    float g = rand(gl_FragCoord.xy + fract(uTime)) - 0.5;
+    col += g * uGrain;
+  }
   fragColor = vec4(col, uOpacity);
 }
 `
 );
+var PLANE_W = 10;
+var PLANE_H = 10;
+var W_SEG = 1;
+var H_SEG = 192;
+var deg2rad = (d) => d * Math.PI / 180;
 function mat4Identity() {
   const m = new Float32Array(16);
-  m[0] = 1;
-  m[5] = 1;
-  m[10] = 1;
-  m[15] = 1;
+  m[0] = m[5] = m[10] = m[15] = 1;
   return m;
 }
 function mat4Perspective(fovy, aspect, near, far) {
@@ -172,15 +184,12 @@ function mat4LookAt(eye, center, up) {
   m[0] = xx;
   m[1] = yx;
   m[2] = zx;
-  m[3] = 0;
   m[4] = xy;
   m[5] = yy;
   m[6] = zy;
-  m[7] = 0;
   m[8] = xz;
   m[9] = yz;
   m[10] = zz;
-  m[11] = 0;
   m[12] = -(xx * eye[0] + xy * eye[1] + xz * eye[2]);
   m[13] = -(yx * eye[0] + yy * eye[1] + yz * eye[2]);
   m[14] = -(zx * eye[0] + zy * eye[1] + zz * eye[2]);
@@ -196,48 +205,72 @@ function mat4Multiply(a, b) {
   }
   return out;
 }
-function mat4RotateX(m, angle) {
-  const s = Math.sin(angle);
-  const c = Math.cos(angle);
-  const r = mat4Identity();
-  r[5] = c;
-  r[6] = s;
-  r[9] = -s;
-  r[10] = c;
-  return mat4Multiply(m, r);
+function mat4FromEulerXYZ(x, y, z) {
+  const c1 = Math.cos(x);
+  const s1 = Math.sin(x);
+  const c2 = Math.cos(y);
+  const s2 = Math.sin(y);
+  const c3 = Math.cos(z);
+  const s3 = Math.sin(z);
+  const m = new Float32Array(16);
+  m[0] = c2 * c3;
+  m[1] = c1 * s3 + s1 * s2 * c3;
+  m[2] = s1 * s3 - c1 * s2 * c3;
+  m[4] = -c2 * s3;
+  m[5] = c1 * c3 - s1 * s2 * s3;
+  m[6] = s1 * c3 + c1 * s2 * s3;
+  m[8] = s2;
+  m[9] = -s1 * c2;
+  m[10] = c1 * c2;
+  m[15] = 1;
+  return m;
 }
-function buildPlaneGeometry(segments, half) {
-  const verts = segments + 1;
-  const positions = new Float32Array(verts * verts * 3);
-  const normals = new Float32Array(verts * verts * 3);
-  const step = half * 2 / segments;
+function mat4Translate(x, y, z) {
+  const m = mat4Identity();
+  m[12] = x;
+  m[13] = y;
+  m[14] = z;
+  return m;
+}
+function sphericalToCartesian(radius, polarDeg, azimuthDeg) {
+  const phi = deg2rad(polarDeg);
+  const theta = deg2rad(azimuthDeg);
+  const sinPhi = Math.sin(phi);
+  return [radius * sinPhi * Math.sin(theta), radius * Math.cos(phi), radius * sinPhi * Math.cos(theta)];
+}
+function buildPlaneGeometry() {
+  const cols = W_SEG + 1;
+  const rows = H_SEG + 1;
+  const positions = new Float32Array(cols * rows * 3);
+  const normals = new Float32Array(cols * rows * 3);
   let p = 0;
-  for (let zi = 0; zi < verts; zi++) {
-    for (let xi = 0; xi < verts; xi++) {
-      positions[p] = -half + xi * step;
-      positions[p + 1] = 0;
-      positions[p + 2] = -half + zi * step;
+  for (let r = 0; r < rows; r++) {
+    const y = (r / (rows - 1) - 0.5) * PLANE_H;
+    for (let c = 0; c < cols; c++) {
+      const x = (c / (cols - 1) - 0.5) * PLANE_W;
+      positions[p] = x;
+      positions[p + 1] = y;
+      positions[p + 2] = 0;
       normals[p] = 0;
-      normals[p + 1] = 1;
-      normals[p + 2] = 0;
+      normals[p + 1] = 0;
+      normals[p + 2] = 1;
       p += 3;
     }
   }
-  const quads = segments * segments;
-  const indices = new Uint32Array(quads * 6);
+  const indices = new Uint32Array(W_SEG * H_SEG * 6);
   let i = 0;
-  for (let zi = 0; zi < segments; zi++) {
-    for (let xi = 0; xi < segments; xi++) {
-      const a = zi * verts + xi;
+  for (let r = 0; r < H_SEG; r++) {
+    for (let c = 0; c < W_SEG; c++) {
+      const a = r * cols + c;
       const b = a + 1;
-      const c = a + verts;
-      const d = c + 1;
+      const d = a + cols;
+      const e = d + 1;
       indices[i++] = a;
-      indices[i++] = c;
-      indices[i++] = b;
-      indices[i++] = b;
-      indices[i++] = c;
       indices[i++] = d;
+      indices[i++] = b;
+      indices[i++] = b;
+      indices[i++] = d;
+      indices[i++] = e;
     }
   }
   return { positions, normals, indices };
@@ -266,10 +299,20 @@ function hexToRgb01(hex) {
 function GradientCanvas({
   colors,
   speed = 0.4,
-  noiseDensity = 1.5,
-  noiseStrength = 1.6,
-  segments = 128,
-  planeHalf = 3.2,
+  density = 1.3,
+  strength = 4,
+  grain = 0,
+  rotationX = 0,
+  rotationY = 10,
+  rotationZ = 50,
+  positionX = -1.4,
+  positionY = 0,
+  positionZ = 0,
+  azimuth = 180,
+  polar = 90,
+  distance = 3.6,
+  zoom = 1,
+  fov = 45,
   opacity = 1,
   animate = true,
   respectReducedMotion = true,
@@ -311,6 +354,12 @@ function GradientCanvas({
     const c1 = hexToRgb01(colors[0]);
     const c2 = hexToRgb01(colors[1]);
     const c3 = hexToRgb01(colors[2]);
+    const model = mat4Multiply(
+      mat4Translate(positionX, positionY, positionZ),
+      mat4FromEulerXYZ(deg2rad(rotationX), deg2rad(rotationY), deg2rad(rotationZ))
+    );
+    const view = mat4LookAt(sphericalToCartesian(distance, polar, azimuth), [0, 0, 0], [0, 1, 0]);
+    const modelView = mat4Multiply(view, model);
     function getDpr() {
       const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
       return Math.min(dpr, maxDpr);
@@ -328,12 +377,12 @@ function GradientCanvas({
     }
     function buildProjection() {
       const aspect = canvas && canvas.height > 0 ? canvas.width / canvas.height : 1;
-      return mat4Perspective(50 * Math.PI / 180, aspect, 0.1, 100);
-    }
-    function buildModelView() {
-      const view = mat4LookAt([0, 1.7, 4.2], [0, 0, 0], [0, 1, 0]);
-      const model = mat4RotateX(mat4Identity(), -Math.PI / 4);
-      return mat4Multiply(view, model);
+      const proj = mat4Perspective(deg2rad(fov), aspect, 0.1, 100);
+      if (zoom !== 1) {
+        proj[0] *= zoom;
+        proj[5] *= zoom;
+      }
+      return proj;
     }
     function renderFrame(elapsedSeconds) {
       if (!gl || !program || disposed || gl.isContextLost()) return;
@@ -344,7 +393,7 @@ function GradientCanvas({
       gl.useProgram(program);
       gl.bindVertexArray(vao);
       gl.uniformMatrix4fv(uProjLoc, false, buildProjection());
-      gl.uniformMatrix4fv(uMvLoc, false, buildModelView());
+      gl.uniformMatrix4fv(uMvLoc, false, modelView);
       gl.uniform1f(uTimeLoc, elapsedSeconds);
       gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_INT, 0);
       gl.bindVertexArray(null);
@@ -384,7 +433,7 @@ function GradientCanvas({
         console.warn("[GradientCanvas] program link failed:", gl.getProgramInfoLog(program));
         return;
       }
-      const { positions, normals, indices } = buildPlaneGeometry(segments, planeHalf);
+      const { positions, normals, indices } = buildPlaneGeometry();
       indexCount = indices.length;
       vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
@@ -409,12 +458,13 @@ function GradientCanvas({
       uProjLoc = gl.getUniformLocation(program, "uProjectionMatrix");
       uMvLoc = gl.getUniformLocation(program, "uModelViewMatrix");
       gl.uniform1f(gl.getUniformLocation(program, "uSpeed"), speed);
-      gl.uniform1f(gl.getUniformLocation(program, "uNoiseDensity"), noiseDensity);
-      gl.uniform1f(gl.getUniformLocation(program, "uNoiseStrength"), noiseStrength);
+      gl.uniform1f(gl.getUniformLocation(program, "uNoiseDensity"), density);
+      gl.uniform1f(gl.getUniformLocation(program, "uNoiseStrength"), strength);
       gl.uniform3fv(gl.getUniformLocation(program, "uColor1"), c1);
       gl.uniform3fv(gl.getUniformLocation(program, "uColor2"), c2);
       gl.uniform3fv(gl.getUniformLocation(program, "uColor3"), c3);
       gl.uniform1f(gl.getUniformLocation(program, "uOpacity"), opacity);
+      gl.uniform1f(gl.getUniformLocation(program, "uGrain"), grain);
       if (disposed) return;
       renderFrame(0);
       if (!staticOnly) start();
@@ -476,10 +526,20 @@ function GradientCanvas({
   }, [
     colorsKey,
     speed,
-    noiseDensity,
-    noiseStrength,
-    segments,
-    planeHalf,
+    density,
+    strength,
+    grain,
+    rotationX,
+    rotationY,
+    rotationZ,
+    positionX,
+    positionY,
+    positionZ,
+    azimuth,
+    polar,
+    distance,
+    zoom,
+    fov,
     opacity,
     animate,
     respectReducedMotion,

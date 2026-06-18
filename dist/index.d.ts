@@ -2,18 +2,32 @@ import * as react from 'react';
 import { CSSProperties } from 'react';
 
 interface GradientCanvasProps {
-    /** Three gradient stop colors as hex strings, e.g. ['#D8DBE2', '#A9BCD0', '#4A8A96']. */
+    /** Three gradient stop colors as hex strings, e.g. ['#ff5005', '#dbba95', '#d0bce1']. */
     colors: [string, string, string];
     /** Animation speed. Default 0.4. */
     speed?: number;
-    /** Perlin noise density (wave frequency). Default 1.5. */
-    noiseDensity?: number;
-    /** Displacement amplitude. Default 1.6. */
-    noiseStrength?: number;
-    /** Plane subdivisions per side (higher = smoother, more vertices). Default 128. */
-    segments?: number;
-    /** Half-extent of the plane in world units. Default 3.2. */
-    planeHalf?: number;
+    /** Perlin noise density (wave frequency). Default 1.3. */
+    density?: number;
+    /** Displacement amplitude. Default 4. */
+    strength?: number;
+    /** Film grain amount, 0..~0.3. Default 0 (off). */
+    grain?: number;
+    /** Mesh rotation in degrees (ShaderGradient Halo default: 0 / 10 / 50). */
+    rotationX?: number;
+    rotationY?: number;
+    rotationZ?: number;
+    /** Mesh position offset in world units (Halo default: -1.4 / 0 / 0). */
+    positionX?: number;
+    positionY?: number;
+    positionZ?: number;
+    /** Camera spherical placement (degrees / world units). Halo: 180 / 90 / 3.6. */
+    azimuth?: number;
+    polar?: number;
+    distance?: number;
+    /** Camera zoom multiplier. Default 1. */
+    zoom?: number;
+    /** Vertical field of view in degrees. Default 45. */
+    fov?: number;
     /** Canvas alpha for the gradient, 0..1. Default 1. */
     opacity?: number;
     /** Animate continuously. When false, renders a single static frame. Default true. */
@@ -29,12 +43,12 @@ interface GradientCanvasProps {
     className?: string;
     style?: CSSProperties;
 }
-declare function GradientCanvas({ colors, speed, noiseDensity, noiseStrength, segments, planeHalf, opacity, animate, respectReducedMotion, staticOnMobile, mobileBreakpoint, maxDpr, className, style, }: GradientCanvasProps): react.JSX.Element;
+declare function GradientCanvas({ colors, speed, density, strength, grain, rotationX, rotationY, rotationZ, positionX, positionY, positionZ, azimuth, polar, distance, zoom, fov, opacity, animate, respectReducedMotion, staticOnMobile, mobileBreakpoint, maxDpr, className, style, }: GradientCanvasProps): react.JSX.Element;
 
 /**
  * Vertex shader (WebGL2 / GLSL ES 3.00).
  *
- * Displaces a subdivided plane mesh along its normal using 3D Perlin noise:
+ * Displaces the plane mesh along its normal using 3D Perlin noise:
  *   noisePos   = 0.43 * position * uNoiseDensity
  *   distortion = 0.75 * cnoise(noisePos + uTime * uSpeed)
  *   pos        = position + normal * distortion * uNoiseStrength
@@ -44,11 +58,12 @@ declare const VERTEX_SHADER = "#version 300 es\nprecision highp float;\n\nin vec
 /**
  * Fragment shader (WebGL2 / GLSL ES 3.00).
  *
- * Two-stage color mix across the displaced position. Both axes use smoothstep so
- * the blend factor stays in [0,1] across the whole plane (avoids edge banding
- * from `mix()` extrapolating an unclamped factor).
- *   col = mix(mix(c1, c2, smoothstep(-3,3, vPos.x)), c3, smoothstep(-3,3, vPos.z))
+ * Two-stage color mix across the displaced position, faithful to ShaderGradient:
+ *   col = mix(mix(c1, c2, smoothstep(-3,3, vPos.x)), c3, vPos.z)
+ * The horizontal color1->color2 gradient comes from the smoothly interpolated
+ * vPos.x across the wide quad; color3 is mixed in by the noise displacement
+ * depth (vPos.z), which produces the bright "halo" highlights. Optional grain.
  */
-declare const FRAGMENT_SHADER = "#version 300 es\nprecision highp float;\n\nin vec3 vPos;\n\nuniform vec3 uColor1;\nuniform vec3 uColor2;\nuniform vec3 uColor3;\nuniform float uOpacity;\n\nout vec4 fragColor;\n\nvoid main() {\n  vec3 col = mix(\n    mix(uColor1, uColor2, smoothstep(-3.0, 3.0, vPos.x)),\n    uColor3,\n    smoothstep(-3.0, 3.0, vPos.z)\n  );\n  fragColor = vec4(col, uOpacity);\n}\n";
+declare const FRAGMENT_SHADER = "#version 300 es\nprecision highp float;\n\nin vec3 vPos;\n\nuniform vec3 uColor1;\nuniform vec3 uColor2;\nuniform vec3 uColor3;\nuniform float uOpacity;\nuniform float uGrain;\nuniform float uTime;\n\nout vec4 fragColor;\n\nfloat rand(vec2 co) {\n  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);\n}\n\nvoid main() {\n  vec3 col = mix(\n    mix(uColor1, uColor2, smoothstep(-3.0, 3.0, vPos.x)),\n    uColor3,\n    vPos.z\n  );\n  if (uGrain > 0.0) {\n    float g = rand(gl_FragCoord.xy + fract(uTime)) - 0.5;\n    col += g * uGrain;\n  }\n  fragColor = vec4(col, uOpacity);\n}\n";
 
 export { FRAGMENT_SHADER, GradientCanvas, type GradientCanvasProps, VERTEX_SHADER };

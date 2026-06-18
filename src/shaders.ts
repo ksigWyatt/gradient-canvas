@@ -10,12 +10,13 @@
 // The displacement formula and the two-stage fragment color mix are faithful
 // ports of the same ShaderGradient "default plane" shaders, with all three.js
 // PBR lighting #include chunks dropped — the gradient color is output directly.
+// Optional film grain is added in the fragment stage.
 // See THIRD_PARTY_NOTICES.md for full attribution.
 
 /**
  * Vertex shader (WebGL2 / GLSL ES 3.00).
  *
- * Displaces a subdivided plane mesh along its normal using 3D Perlin noise:
+ * Displaces the plane mesh along its normal using 3D Perlin noise:
  *   noisePos   = 0.43 * position * uNoiseDensity
  *   distortion = 0.75 * cnoise(noisePos + uTime * uSpeed)
  *   pos        = position + normal * distortion * uNoiseStrength
@@ -125,10 +126,11 @@ void main() {
 /**
  * Fragment shader (WebGL2 / GLSL ES 3.00).
  *
- * Two-stage color mix across the displaced position. Both axes use smoothstep so
- * the blend factor stays in [0,1] across the whole plane (avoids edge banding
- * from `mix()` extrapolating an unclamped factor).
- *   col = mix(mix(c1, c2, smoothstep(-3,3, vPos.x)), c3, smoothstep(-3,3, vPos.z))
+ * Two-stage color mix across the displaced position, faithful to ShaderGradient:
+ *   col = mix(mix(c1, c2, smoothstep(-3,3, vPos.x)), c3, vPos.z)
+ * The horizontal color1->color2 gradient comes from the smoothly interpolated
+ * vPos.x across the wide quad; color3 is mixed in by the noise displacement
+ * depth (vPos.z), which produces the bright "halo" highlights. Optional grain.
  */
 export const FRAGMENT_SHADER = /* glsl */ `#version 300 es
 precision highp float;
@@ -139,15 +141,25 @@ uniform vec3 uColor1;
 uniform vec3 uColor2;
 uniform vec3 uColor3;
 uniform float uOpacity;
+uniform float uGrain;
+uniform float uTime;
 
 out vec4 fragColor;
+
+float rand(vec2 co) {
+  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+}
 
 void main() {
   vec3 col = mix(
     mix(uColor1, uColor2, smoothstep(-3.0, 3.0, vPos.x)),
     uColor3,
-    smoothstep(-3.0, 3.0, vPos.z)
+    vPos.z
   );
+  if (uGrain > 0.0) {
+    float g = rand(gl_FragCoord.xy + fract(uTime)) - 0.5;
+    col += g * uGrain;
+  }
   fragColor = vec4(col, uOpacity);
 }
 `;
