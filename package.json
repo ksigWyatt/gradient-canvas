@@ -1,0 +1,57 @@
+{
+  "name": "gradient-canvas",
+  "version": "0.1.0",
+  "description": "Lightweight animated WebGL2 gradient background for React — flowing Perlin-noise mesh gradients with no three.js and zero runtime dependencies.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "webgl",
+    "webgl2",
+    "gradient",
+    "shader",
+    "react",
+    "background",
+    "mesh-gradient",
+    "perlin-noise",
+    "animated"
+  ],
+  "license": "MIT",
+  "author": "ksigWyatt",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ksigWyatt/gradient-canvas.git"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "react": "^19",
+    "react-dom": "^19",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.2"
+  }
+}
