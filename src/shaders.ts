@@ -1,51 +1,62 @@
-// 3D Perlin noise + gradient color mix ported from ShaderGradient.
+// 3D Perlin noise + gradient color mix adapted from ShaderGradient.
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2022 ruucm, stone-skipper — https://github.com/ruucm/shadergradient
 //
 // The `cnoise(vec3)` 3D classic Perlin noise function (and its
 // mod289 / permute / taylorInvSqrt / fade helpers) is copied VERBATIM from
-// ShaderGradient's default-plane vertex shader, which in turn sourced it from
-// https://github.com/hughsk/glsl-noise (periodic/3d.glsl, (c) Stefan Gustavson).
+// ShaderGradient, which sourced it from https://github.com/hughsk/glsl-noise
+// (periodic/3d.glsl, (c) Stefan Gustavson).
 //
-// The displacement formula and the two-stage fragment color mix are faithful
-// ports of the same ShaderGradient "default plane" shaders, with all three.js
-// PBR lighting #include chunks dropped — the gradient color is output directly.
-// Optional film grain is added in the fragment stage.
-// See THIRD_PARTY_NOTICES.md for full attribution.
+// The two-stage color mix `mix(mix(c1, c2, smoothstep(-3,3, x)), c3, z)` is
+// ShaderGradient's plane gradient — here evaluated in screen space on a
+// fullscreen quad (x = position along a diagonal axis, z = a normalized noise
+// field) rather than on a 3D displaced mesh, which reproduces the smooth "Halo"
+// look without a camera. See THIRD_PARTY_NOTICES.md for full attribution.
 
-/**
- * Vertex shader (WebGL2 / GLSL ES 3.00).
- *
- * Displaces the plane mesh along its normal using 3D Perlin noise:
- *   noisePos   = 0.43 * position * uNoiseDensity
- *   distortion = 0.75 * cnoise(noisePos + uTime * uSpeed)
- *   pos        = position + normal * distortion * uNoiseStrength
- * The displaced position `pos` is passed to the fragment shader as `vPos`.
- */
+/** Vertex shader (WebGL2 / GLSL ES 3.00) — a single fullscreen triangle. */
 export const VERTEX_SHADER = /* glsl */ `#version 300 es
 precision highp float;
 
-in vec3 position;
-in vec3 normal;
+// Fullscreen triangle — no attributes, no VAO, no MVP. Driven by gl_VertexID.
+// Draw with: gl.drawArrays(gl.TRIANGLES, 0, 3)
+out vec2 vUv;
 
-uniform mat4 uProjectionMatrix;
-uniform mat4 uModelViewMatrix;
-uniform float uTime;
-uniform float uSpeed;
-uniform float uNoiseDensity;
-uniform float uNoiseStrength;
+void main() {
+  vec2 verts[3] = vec2[3](vec2(-1.0, -1.0), vec2(3.0, -1.0), vec2(-1.0, 3.0));
+  vec2 p = verts[gl_VertexID];
+  vUv = p * 0.5 + 0.5;          // 0..1, with overscan beyond 1 on the big triangle
+  gl_Position = vec4(p, 0.0, 1.0);
+}
+`;
 
-out vec3 vPos;
+/** Fragment shader (WebGL2 / GLSL ES 3.00). */
+export const FRAGMENT_SHADER = /* glsl */ `#version 300 es
+precision highp float;
 
-// 3D classic Perlin noise — verbatim from glsl-noise / ShaderGradient.
+in vec2 vUv;
+
+uniform vec3  uColor1;
+uniform vec3  uColor2;
+uniform vec3  uColor3;
+uniform float uTime;     // seconds
+uniform float uSpeed;    // animation rate (Halo: 0.4)
+uniform float uDensity;  // noise frequency (Halo: 1.3)
+uniform float uStrength; // color3 "halo" contribution; remapped, NOT raw mix (Halo src: 4)
+uniform float uAngle;    // diagonal axis in degrees (Halo rotationZ: 50)
+uniform float uAspect;   // canvas.width / canvas.height — MUST be set each resize/frame
+uniform float uGrain;    // film grain amount, ~0..0.3 (0 = off)
+uniform float uOpacity;  // 0..1
+
+out vec4 fragColor;
+
+// ---- 3D classic Perlin noise (cnoise) — verbatim glsl-noise / ShaderGradient, MIT ----
 vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
 vec4 permute(vec4 x) { return mod289(((x*34.0)+1.0)*x); }
 vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
 vec3 fade(vec3 t) { return t*t*t*(t*(t*6.0-15.0)+10.0); }
 
-float cnoise(vec3 P)
-{
+float cnoise(vec3 P) {
   vec3 Pi0 = floor(P);
   vec3 Pi1 = Pi0 + vec3(1.0);
   Pi0 = mod289(Pi0);
@@ -86,16 +97,10 @@ float cnoise(vec3 P)
   vec3 g011 = vec3(gx1.z,gy1.z,gz1.z);
   vec3 g111 = vec3(gx1.w,gy1.w,gz1.w);
 
-  vec4 norm0 = taylorInvSqrt(vec4(dot(g000, g000), dot(g010, g010), dot(g100, g100), dot(g110, g110)));
-  g000 *= norm0.x;
-  g010 *= norm0.y;
-  g100 *= norm0.z;
-  g110 *= norm0.w;
-  vec4 norm1 = taylorInvSqrt(vec4(dot(g001, g001), dot(g011, g011), dot(g101, g101), dot(g111, g111)));
-  g001 *= norm1.x;
-  g011 *= norm1.y;
-  g101 *= norm1.z;
-  g111 *= norm1.w;
+  vec4 norm0 = taylorInvSqrt(vec4(dot(g000,g000), dot(g010,g010), dot(g100,g100), dot(g110,g110)));
+  g000 *= norm0.x; g010 *= norm0.y; g100 *= norm0.z; g110 *= norm0.w;
+  vec4 norm1 = taylorInvSqrt(vec4(dot(g001,g001), dot(g011,g011), dot(g101,g101), dot(g111,g111)));
+  g001 *= norm1.x; g011 *= norm1.y; g101 *= norm1.z; g111 *= norm1.w;
 
   float n000 = dot(g000, Pf0);
   float n100 = dot(g100, vec3(Pf1.x, Pf0.yz));
@@ -110,56 +115,45 @@ float cnoise(vec3 P)
   vec4 n_z = mix(vec4(n000, n100, n010, n110), vec4(n001, n101, n011, n111), fade_xyz.z);
   vec2 n_yz = mix(n_z.xy, n_z.zw, fade_xyz.y);
   float n_xyz = mix(n_yz.x, n_yz.y, fade_xyz.x);
-  return 2.2 * n_xyz;
+  return 2.2 * n_xyz;          // ~[-2.2, 2.2]
 }
 
-void main() {
-  float t = uTime * uSpeed;
-  vec3 noisePos = 0.43 * position * uNoiseDensity;
-  float distortion = 0.75 * cnoise(noisePos + t);
-  vec3 pos = position + normal * distortion * uNoiseStrength;
-  vPos = pos;
-  gl_Position = uProjectionMatrix * uModelViewMatrix * vec4(pos, 1.0);
-}
-`;
-
-/**
- * Fragment shader (WebGL2 / GLSL ES 3.00).
- *
- * Two-stage color mix across the displaced position, faithful to ShaderGradient:
- *   col = mix(mix(c1, c2, smoothstep(-3,3, vPos.x)), c3, vPos.z)
- * The horizontal color1->color2 gradient comes from the smoothly interpolated
- * vPos.x across the wide quad; color3 is mixed in by the noise displacement
- * depth (vPos.z), which produces the bright "halo" highlights. Optional grain.
- */
-export const FRAGMENT_SHADER = /* glsl */ `#version 300 es
-precision highp float;
-
-in vec3 vPos;
-
-uniform vec3 uColor1;
-uniform vec3 uColor2;
-uniform vec3 uColor3;
-uniform float uOpacity;
-uniform float uGrain;
-uniform float uTime;
-
-out vec4 fragColor;
-
+// Cheap hash grain (no texture). Animated by uTime so it shimmers like film grain.
 float rand(vec2 co) {
   return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
 }
 
 void main() {
-  vec3 col = mix(
-    mix(uColor1, uColor2, smoothstep(-3.0, 3.0, vPos.x)),
-    uColor3,
-    vPos.z
-  );
+  // Aspect-corrected, centered coordinate. Aspect on X keeps the diagonal at a
+  // true on-screen angle regardless of canvas shape.
+  vec2 p = vUv - 0.5;
+  p.x *= uAspect;
+
+  float t = uTime * uSpeed;
+  float a = radians(uAngle);
+  vec2  dir = vec2(cos(a), sin(a));   // diagonal axis; 50deg => lower-left -> upper-right
+
+  // --- color1 <-> color2 along the diagonal (ShaderGradient's smoothstep(-3,3,vPos.x)) ---
+  // Low-frequency warp makes the boundary undulate softly (the "smooth" not "banded" look).
+  float diag = dot(p, dir);
+  float warp = cnoise(vec3(p * uDensity, t));
+  float x = diag * 6.0 + warp * 1.6;            // map into the [-3,3] smoothstep domain
+  vec3 base = mix(uColor1, uColor2, smoothstep(-3.0, 3.0, x));
+
+  // --- color3 "halo" via a second Perlin field (plays the role of vPos.z) ---
+  // IMPORTANT: cnoise is ~[-2.2,2.2]; multiplying raw by uStrength (Halo=4) overshoots
+  // the mix far outside [0,1] and makes color3 dominate/invert. Normalize to a 0..1
+  // weight, then scale by strength/Halo-reference so uStrength stays an intuitive knob.
+  float zRaw = cnoise(vec3(p * uDensity * 1.3 + 8.0, t * 0.85));   // ~[-2.2,2.2]
+  float zNorm = zRaw * 0.5 + 0.5;                                   // ~0..1
+  float z = clamp(zNorm * (uStrength / 4.0), 0.0, 1.0);            // uStrength=4 => full range
+  vec3 col = mix(base, uColor3, z);
+
   if (uGrain > 0.0) {
     float g = rand(gl_FragCoord.xy + fract(uTime)) - 0.5;
     col += g * uGrain;
   }
-  fragColor = vec4(col, uOpacity);
+
+  fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);
 }
 `;

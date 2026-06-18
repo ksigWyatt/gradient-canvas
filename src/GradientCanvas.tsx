@@ -3,11 +3,11 @@
 /**
  * GradientCanvas
  * --------------
- * A lightweight animated WebGL2 gradient background for React. Renders a wide
- * plane mesh displaced by 3D Perlin noise (a faithful raw-WebGL2 port of
- * ShaderGradient's default plane / "Halo" look) — no three.js, no
- * @react-three/fiber, zero runtime dependencies. Colors, camera, and transform
- * are configurable via props; defaults reproduce the ShaderGradient Halo preset.
+ * A lightweight animated WebGL2 gradient background for React. Renders a
+ * fullscreen-quad fragment shader evaluating ShaderGradient's color formula in
+ * screen space (no mesh, no camera) — no three.js, zero runtime dependencies.
+ * Colors, animation, and noise parameters are configurable via props; defaults
+ * reproduce the ShaderGradient Halo preset.
  *
  * The canvas is decorative (aria-hidden). If WebGL2 is unavailable it renders
  * nothing, so a CSS background on the parent shows through.
@@ -24,26 +24,12 @@ export interface GradientCanvasProps {
   speed?: number;
   /** Perlin noise density (wave frequency). Default 1.3. */
   density?: number;
-  /** Displacement amplitude. Default 4. */
+  /** Color3 "halo" contribution strength; 4 = full range (Halo reference). Default 4. */
   strength?: number;
+  /** Diagonal axis angle in degrees. Default 50 (lower-left to upper-right, matching Halo). */
+  angle?: number;
   /** Film grain amount, 0..~0.3. Default 0 (off). */
   grain?: number;
-  /** Mesh rotation in degrees (ShaderGradient Halo default: 0 / 10 / 50). */
-  rotationX?: number;
-  rotationY?: number;
-  rotationZ?: number;
-  /** Mesh position offset in world units (Halo default: -1.4 / 0 / 0). */
-  positionX?: number;
-  positionY?: number;
-  positionZ?: number;
-  /** Camera spherical placement (degrees / world units). Halo: 180 / 90 / 3.6. */
-  azimuth?: number;
-  polar?: number;
-  distance?: number;
-  /** Camera zoom multiplier. Default 1. */
-  zoom?: number;
-  /** Vertical field of view in degrees. Default 45. */
-  fov?: number;
   /** Canvas alpha for the gradient, 0..1. Default 1. */
   opacity?: number;
   /** Animate continuously. When false, renders a single static frame. Default true. */
@@ -58,175 +44,6 @@ export interface GradientCanvasProps {
   maxDpr?: number;
   className?: string;
   style?: CSSProperties;
-}
-
-// Plane geometry matches ShaderGradient's default plane: 10x10, 1 width
-// segment (vPos.x interpolates smoothly across the quad) x 192 height segments
-// (carry the wave detail). Lies in XY with normal +Z, displaced toward camera.
-const PLANE_W = 10;
-const PLANE_H = 10;
-const W_SEG = 1;
-const H_SEG = 192;
-
-type Mat4 = Float32Array;
-const deg2rad = (d: number) => (d * Math.PI) / 180;
-
-function mat4Identity(): Mat4 {
-  const m = new Float32Array(16);
-  m[0] = m[5] = m[10] = m[15] = 1;
-  return m;
-}
-
-function mat4Perspective(fovy: number, aspect: number, near: number, far: number): Mat4 {
-  const f = 1 / Math.tan(fovy / 2);
-  const nf = 1 / (near - far);
-  const m = new Float32Array(16);
-  m[0] = f / aspect;
-  m[5] = f;
-  m[10] = (far + near) * nf;
-  m[11] = -1;
-  m[14] = 2 * far * near * nf;
-  return m;
-}
-
-function mat4LookAt(
-  eye: [number, number, number],
-  center: [number, number, number],
-  up: [number, number, number]
-): Mat4 {
-  let zx = eye[0] - center[0];
-  let zy = eye[1] - center[1];
-  let zz = eye[2] - center[2];
-  const zlen = Math.hypot(zx, zy, zz) || 1;
-  zx /= zlen;
-  zy /= zlen;
-  zz /= zlen;
-
-  let xx = up[1] * zz - up[2] * zy;
-  let xy = up[2] * zx - up[0] * zz;
-  let xz = up[0] * zy - up[1] * zx;
-  const xlen = Math.hypot(xx, xy, xz) || 1;
-  xx /= xlen;
-  xy /= xlen;
-  xz /= xlen;
-
-  const yx = zy * xz - zz * xy;
-  const yy = zz * xx - zx * xz;
-  const yz = zx * xy - zy * xx;
-
-  const m = new Float32Array(16);
-  m[0] = xx;
-  m[1] = yx;
-  m[2] = zx;
-  m[4] = xy;
-  m[5] = yy;
-  m[6] = zy;
-  m[8] = xz;
-  m[9] = yz;
-  m[10] = zz;
-  m[12] = -(xx * eye[0] + xy * eye[1] + xz * eye[2]);
-  m[13] = -(yx * eye[0] + yy * eye[1] + yz * eye[2]);
-  m[14] = -(zx * eye[0] + zy * eye[1] + zz * eye[2]);
-  m[15] = 1;
-  return m;
-}
-
-function mat4Multiply(a: Mat4, b: Mat4): Mat4 {
-  const out = new Float32Array(16);
-  for (let c = 0; c < 4; c++) {
-    for (let r = 0; r < 4; r++) {
-      out[c * 4 + r] =
-        a[0 * 4 + r] * b[c * 4 + 0] +
-        a[1 * 4 + r] * b[c * 4 + 1] +
-        a[2 * 4 + r] * b[c * 4 + 2] +
-        a[3 * 4 + r] * b[c * 4 + 3];
-    }
-  }
-  return out;
-}
-
-// Rotation matrix for Euler angles applied in three.js 'XYZ' order (radians).
-function mat4FromEulerXYZ(x: number, y: number, z: number): Mat4 {
-  const c1 = Math.cos(x);
-  const s1 = Math.sin(x);
-  const c2 = Math.cos(y);
-  const s2 = Math.sin(y);
-  const c3 = Math.cos(z);
-  const s3 = Math.sin(z);
-  const m = new Float32Array(16);
-  m[0] = c2 * c3;
-  m[1] = c1 * s3 + s1 * s2 * c3;
-  m[2] = s1 * s3 - c1 * s2 * c3;
-  m[4] = -c2 * s3;
-  m[5] = c1 * c3 - s1 * s2 * s3;
-  m[6] = s1 * c3 + c1 * s2 * s3;
-  m[8] = s2;
-  m[9] = -s1 * c2;
-  m[10] = c1 * c2;
-  m[15] = 1;
-  return m;
-}
-
-function mat4Translate(x: number, y: number, z: number): Mat4 {
-  const m = mat4Identity();
-  m[12] = x;
-  m[13] = y;
-  m[14] = z;
-  return m;
-}
-
-// three.js Spherical -> Cartesian: phi = polar from +Y, theta = azimuth.
-function sphericalToCartesian(
-  radius: number,
-  polarDeg: number,
-  azimuthDeg: number
-): [number, number, number] {
-  const phi = deg2rad(polarDeg);
-  const theta = deg2rad(azimuthDeg);
-  const sinPhi = Math.sin(phi);
-  return [radius * sinPhi * Math.sin(theta), radius * Math.cos(phi), radius * sinPhi * Math.cos(theta)];
-}
-
-// 10x10 plane in XY, normal +Z. W_SEG+1 columns x H_SEG+1 rows.
-function buildPlaneGeometry() {
-  const cols = W_SEG + 1;
-  const rows = H_SEG + 1;
-  const positions = new Float32Array(cols * rows * 3);
-  const normals = new Float32Array(cols * rows * 3);
-
-  let p = 0;
-  for (let r = 0; r < rows; r++) {
-    const y = (r / (rows - 1) - 0.5) * PLANE_H;
-    for (let c = 0; c < cols; c++) {
-      const x = (c / (cols - 1) - 0.5) * PLANE_W;
-      positions[p] = x;
-      positions[p + 1] = y;
-      positions[p + 2] = 0;
-      normals[p] = 0;
-      normals[p + 1] = 0;
-      normals[p + 2] = 1;
-      p += 3;
-    }
-  }
-
-  const indices = new Uint32Array(W_SEG * H_SEG * 6);
-  let i = 0;
-  for (let r = 0; r < H_SEG; r++) {
-    for (let c = 0; c < W_SEG; c++) {
-      const a = r * cols + c;
-      const b = a + 1;
-      const d = a + cols;
-      const e = d + 1;
-      indices[i++] = a;
-      indices[i++] = d;
-      indices[i++] = b;
-      indices[i++] = b;
-      indices[i++] = d;
-      indices[i++] = e;
-    }
-  }
-
-  return { positions, normals, indices };
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, src: string): WebGLShader | null {
@@ -261,18 +78,8 @@ export function GradientCanvas({
   speed = 0.4,
   density = 1.3,
   strength = 4,
+  angle = 50,
   grain = 0,
-  rotationX = 0,
-  rotationY = 10,
-  rotationZ = 50,
-  positionX = -1.4,
-  positionY = 0,
-  positionZ = 0,
-  azimuth = 180,
-  polar = 90,
-  distance = 3.6,
-  zoom = 1,
-  fov = 45,
   opacity = 1,
   animate = true,
   respectReducedMotion = true,
@@ -291,7 +98,7 @@ export function GradientCanvas({
 
     const gl = canvas.getContext('webgl2', {
       alpha: true,
-      antialias: true,
+      antialias: false,
       premultipliedAlpha: false,
       powerPreference: 'low-power',
     });
@@ -300,18 +107,13 @@ export function GradientCanvas({
     let rafId = 0;
     let program: WebGLProgram | null = null;
     let vao: WebGLVertexArrayObject | null = null;
-    let posBuf: WebGLBuffer | null = null;
-    let normBuf: WebGLBuffer | null = null;
-    let idxBuf: WebGLBuffer | null = null;
-    let indexCount = 0;
     let disposed = false;
     let running = false;
     let startTime = 0;
     let isIntersecting = true;
 
     let uTimeLoc: WebGLUniformLocation | null = null;
-    let uProjLoc: WebGLUniformLocation | null = null;
-    let uMvLoc: WebGLUniformLocation | null = null;
+    let uAspectLoc: WebGLUniformLocation | null = null;
 
     const prefersReducedMotion =
       typeof window !== 'undefined' &&
@@ -324,14 +126,6 @@ export function GradientCanvas({
     const c1 = hexToRgb01(colors[0]);
     const c2 = hexToRgb01(colors[1]);
     const c3 = hexToRgb01(colors[2]);
-
-    // Model-view is constant (no per-frame camera motion) — compute once.
-    const model = mat4Multiply(
-      mat4Translate(positionX, positionY, positionZ),
-      mat4FromEulerXYZ(deg2rad(rotationX), deg2rad(rotationY), deg2rad(rotationZ))
-    );
-    const view = mat4LookAt(sphericalToCartesian(distance, polar, azimuth), [0, 0, 0], [0, 1, 0]);
-    const modelView = mat4Multiply(view, model);
 
     function getDpr(): number {
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -350,28 +144,16 @@ export function GradientCanvas({
       gl.viewport(0, 0, canvas.width, canvas.height);
     }
 
-    function buildProjection(): Mat4 {
-      const aspect = canvas && canvas.height > 0 ? canvas.width / canvas.height : 1;
-      const proj = mat4Perspective(deg2rad(fov), aspect, 0.1, 100);
-      if (zoom !== 1) {
-        proj[0] *= zoom;
-        proj[5] *= zoom;
-      }
-      return proj;
-    }
-
     function renderFrame(elapsedSeconds: number) {
-      if (!gl || !program || disposed || gl.isContextLost()) return;
+      if (!gl || !program || !canvas || disposed || gl.isContextLost()) return;
       resize();
       gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.enable(gl.DEPTH_TEST);
+      gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(program);
       gl.bindVertexArray(vao);
-      gl.uniformMatrix4fv(uProjLoc, false, buildProjection());
-      gl.uniformMatrix4fv(uMvLoc, false, modelView);
       gl.uniform1f(uTimeLoc, elapsedSeconds);
-      gl.drawElements(gl.TRIANGLES, indexCount, gl.UNSIGNED_INT, 0);
+      gl.uniform1f(uAspectLoc, canvas.height > 0 ? canvas.width / canvas.height : 1);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
       gl.bindVertexArray(null);
     }
 
@@ -417,45 +199,32 @@ export function GradientCanvas({
         return;
       }
 
-      const { positions, normals, indices } = buildPlaneGeometry();
-      indexCount = indices.length;
-
+      // Empty VAO — WebGL2 requires a bound VAO to draw; no attributes needed for
+      // the fullscreen-quad path (position comes from gl_VertexID in the shader).
       vao = gl.createVertexArray();
       gl.bindVertexArray(vao);
-
-      const posLoc = gl.getAttribLocation(program, 'position');
-      const normLoc = gl.getAttribLocation(program, 'normal');
-
-      posBuf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
-      gl.enableVertexAttribArray(posLoc);
-      gl.vertexAttribPointer(posLoc, 3, gl.FLOAT, false, 0, 0);
-
-      normBuf = gl.createBuffer();
-      gl.bindBuffer(gl.ARRAY_BUFFER, normBuf);
-      gl.bufferData(gl.ARRAY_BUFFER, normals, gl.STATIC_DRAW);
-      gl.enableVertexAttribArray(normLoc);
-      gl.vertexAttribPointer(normLoc, 3, gl.FLOAT, false, 0, 0);
-
-      idxBuf = gl.createBuffer();
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, idxBuf);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-
       gl.bindVertexArray(null);
 
+      // Enable alpha blending so opacity < 1 composites over the CSS background.
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
       gl.useProgram(program);
+
+      // Cache per-frame uniform locations.
       uTimeLoc = gl.getUniformLocation(program, 'uTime');
-      uProjLoc = gl.getUniformLocation(program, 'uProjectionMatrix');
-      uMvLoc = gl.getUniformLocation(program, 'uModelViewMatrix');
+      uAspectLoc = gl.getUniformLocation(program, 'uAspect');
+
+      // Set-once uniforms.
       gl.uniform1f(gl.getUniformLocation(program, 'uSpeed'), speed);
-      gl.uniform1f(gl.getUniformLocation(program, 'uNoiseDensity'), density);
-      gl.uniform1f(gl.getUniformLocation(program, 'uNoiseStrength'), strength);
+      gl.uniform1f(gl.getUniformLocation(program, 'uDensity'), density);
+      gl.uniform1f(gl.getUniformLocation(program, 'uStrength'), strength);
+      gl.uniform1f(gl.getUniformLocation(program, 'uAngle'), angle);
       gl.uniform3fv(gl.getUniformLocation(program, 'uColor1'), c1);
       gl.uniform3fv(gl.getUniformLocation(program, 'uColor2'), c2);
       gl.uniform3fv(gl.getUniformLocation(program, 'uColor3'), c3);
-      gl.uniform1f(gl.getUniformLocation(program, 'uOpacity'), opacity);
       gl.uniform1f(gl.getUniformLocation(program, 'uGrain'), grain);
+      gl.uniform1f(gl.getUniformLocation(program, 'uOpacity'), opacity);
 
       if (disposed) return;
       renderFrame(0);
@@ -516,16 +285,13 @@ export function GradientCanvas({
       canvas.removeEventListener('webglcontextlost', onContextLost, false);
       if (observer) observer.disconnect();
       if (gl) {
-        if (posBuf) gl.deleteBuffer(posBuf);
-        if (normBuf) gl.deleteBuffer(normBuf);
-        if (idxBuf) gl.deleteBuffer(idxBuf);
         if (vao) gl.deleteVertexArray(vao);
         if (program) gl.deleteProgram(program);
       }
-      // NOTE: we deliberately do NOT call WEBGL_lose_context — React 19
-      // StrictMode remounts on the SAME canvas, which can only ever return its
-      // original context; losing it would leave the remount with a dead context.
-      // The context is released by GC when the canvas is detached on unmount.
+      // NOTE: deliberately NOT calling WEBGL_lose_context — React 19 StrictMode
+      // remounts on the SAME canvas element; losing the context would leave the
+      // remount with a permanently dead context. The browser releases the context
+      // via GC when the canvas is detached on final unmount.
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -533,18 +299,8 @@ export function GradientCanvas({
     speed,
     density,
     strength,
+    angle,
     grain,
-    rotationX,
-    rotationY,
-    rotationZ,
-    positionX,
-    positionY,
-    positionZ,
-    azimuth,
-    polar,
-    distance,
-    zoom,
-    fov,
     opacity,
     animate,
     respectReducedMotion,
