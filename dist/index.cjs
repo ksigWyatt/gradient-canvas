@@ -112,12 +112,17 @@ float cnoise(vec3 P) {
   return 2.2 * n_xyz;          // ~[-2.2, 2.2]
 }
 
-// Sine-free per-pixel + per-frame hash (Dave Hoskins, MIT).
-// Avoids the diagonal aliasing / scan-line artefact of sin-based hashes.
-float hash13(vec3 p3) {
-  p3 = fract(p3 * 0.1031);
-  p3 += dot(p3, p3.zyx + 31.32);
-  return fract((p3.x + p3.y) * p3.z);
+// PCG integer hash \u2014 pattern-free white noise, no directional correlation.
+// O'Neill, "PCG: A Family of Simple Fast Space-Efficient Statistically Good
+// Algorithms for Random Number Generation", 2014.
+uint pcgHash(uint v) {
+  uint state = v * 747796405u + 2891336453u;
+  uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+float grainHash(vec2 fc, float frame) {
+  uint h = pcgHash(uint(fc.x) * 374761393u + uint(fc.y) * 668265263u + uint(frame) * 2246822519u);
+  return float(h) * (1.0 / 4294967296.0);
 }
 
 void main() {
@@ -144,7 +149,7 @@ void main() {
   vec3 col = mix(uColors[i], uColors[i + 1], f);
 
   if (uGrain > 0.0) {
-    float g = hash13(vec3(gl_FragCoord.xy, floor(uTime * 60.0)));
+    float g = grainHash(gl_FragCoord.xy, floor(uTime * 60.0));
     col += (g - 0.5) * uGrain;
   }
   fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);
