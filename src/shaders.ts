@@ -128,8 +128,9 @@ void main() {
   float a = radians(uAngle);
   vec2 dir = vec2(cos(a), sin(a));
 
-  // Gentle low-frequency organic warp (uStrength = amount, uDensity = frequency).
-  float warp = cnoise(vec3(p * uDensity, t)) * uStrength * 0.15;
+  // Two-octave warp: coarse low-frequency base + finer faster layer for living movement.
+  float warp = cnoise(vec3(p * uDensity, t)) * uStrength * 0.15
+             + cnoise(vec3(p * uDensity * 2.3 + 4.0, t * 1.3)) * uStrength * 0.07;
 
   // One smooth diagonal coordinate spanning the whole frame, 0..1. The 0.95 slope
   // makes the 3 colors sweep edge-to-edge; no hard transition anywhere.
