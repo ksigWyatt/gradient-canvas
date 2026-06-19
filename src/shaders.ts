@@ -116,9 +116,12 @@ float cnoise(vec3 P) {
   return 2.2 * n_xyz;          // ~[-2.2, 2.2]
 }
 
-// Cheap hash grain (no texture). Animated by uTime so it shimmers like film grain.
-float rand(vec2 co) {
-  return fract(sin(dot(co, vec2(12.9898, 78.233))) * 43758.5453);
+// Sine-free per-pixel + per-frame hash (Dave Hoskins, MIT).
+// Avoids the diagonal aliasing / scan-line artefact of sin-based hashes.
+float hash13(vec3 p3) {
+  p3 = fract(p3 * 0.1031);
+  p3 += dot(p3, p3.zyx + 31.32);
+  return fract((p3.x + p3.y) * p3.z);
 }
 
 void main() {
@@ -144,7 +147,10 @@ void main() {
   float f = seg - float(i);
   vec3 col = mix(uColors[i], uColors[i + 1], f);
 
-  if (uGrain > 0.0) col += (rand(gl_FragCoord.xy + fract(uTime)) - 0.5) * uGrain;
+  if (uGrain > 0.0) {
+    float g = hash13(vec3(gl_FragCoord.xy, floor(uTime * 60.0)));
+    col += (g - 0.5) * uGrain;
+  }
   fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);
 }
 `;
