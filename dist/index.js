@@ -117,36 +117,26 @@ float rand(vec2 co) {
 }
 
 void main() {
-  // Aspect-corrected, centered coordinate. Aspect on X keeps the diagonal at a
-  // true on-screen angle regardless of canvas shape.
   vec2 p = vUv - 0.5;
   p.x *= uAspect;
-
   float t = uTime * uSpeed;
   float a = radians(uAngle);
-  vec2  dir = vec2(cos(a), sin(a));   // diagonal axis; 50deg => lower-left -> upper-right
+  vec2 dir = vec2(cos(a), sin(a));
+  vec2 perp = vec2(-dir.y, dir.x);
 
-  // --- color1 <-> color2 along the diagonal (ShaderGradient's smoothstep(-3,3,vPos.x)) ---
-  // Low-frequency warp makes the boundary undulate softly (the "smooth" not "banded" look).
-  float diag = dot(p, dir);
-  float warp = cnoise(vec3(p * uDensity, t));
-  float x = diag * 6.0 + warp * 1.6;            // map into the [-3,3] smoothstep domain
+  // Subtle low-frequency organic warp (uDensity LOW => smooth; uStrength = amount).
+  float warp = cnoise(vec3(p * uDensity, t)) * uStrength * 0.25;
+
+  // color1 -> color2 along the diagonal axis (ShaderGradient smoothstep(-3,3,x)).
+  float x = (dot(p, dir) + warp) * 6.0;
   vec3 base = mix(uColor1, uColor2, smoothstep(-3.0, 3.0, x));
 
-  // --- color3 "halo" via a second Perlin field (plays the role of vPos.z) ---
-  // IMPORTANT: cnoise is ~[-2.2,2.2]; multiplying raw by uStrength (Halo=4) overshoots
-  // the mix far outside [0,1] and makes color3 dominate/invert. Normalize to a 0..1
-  // weight, then scale by strength/Halo-reference so uStrength stays an intuitive knob.
-  float zRaw = cnoise(vec3(p * uDensity * 1.3 + 8.0, t * 0.85));   // ~[-2.2,2.2]
-  float zNorm = zRaw * 0.5 + 0.5;                                   // ~0..1
-  float z = clamp(zNorm * (uStrength / 4.0), 0.0, 1.0);            // uStrength=4 => full range
+  // color3 grows smoothly along the PERPENDICULAR axis (position-driven region),
+  // with the same gentle warp \u2014 a smooth corner, not scattered patches.
+  float z = clamp((dot(p, perp) + warp) * 1.3 + 0.5, 0.0, 1.0);
   vec3 col = mix(base, uColor3, z);
 
-  if (uGrain > 0.0) {
-    float g = rand(gl_FragCoord.xy + fract(uTime)) - 0.5;
-    col += g * uGrain;
-  }
-
+  if (uGrain > 0.0) col += (rand(gl_FragCoord.xy + fract(uTime)) - 0.5) * uGrain;
   fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);
 }
 `
