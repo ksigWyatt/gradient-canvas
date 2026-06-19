@@ -129,19 +129,17 @@ void main() {
   float t = uTime * uSpeed;
   float a = radians(uAngle);
   vec2 dir = vec2(cos(a), sin(a));
-  vec2 perp = vec2(-dir.y, dir.x);
 
-  // Subtle low-frequency organic warp (uDensity LOW => smooth; uStrength = amount).
-  float warp = cnoise(vec3(p * uDensity, t)) * uStrength * 0.25;
+  // Gentle low-frequency organic warp (uStrength = amount, uDensity = frequency).
+  float warp = cnoise(vec3(p * uDensity, t)) * uStrength * 0.15;
 
-  // color1 -> color2 along the diagonal axis (ShaderGradient smoothstep(-3,3,x)).
-  float x = (dot(p, dir) + warp) * 6.0;
-  vec3 base = mix(uColor1, uColor2, smoothstep(-3.0, 3.0, x));
+  // One smooth diagonal coordinate spanning the whole frame, 0..1. The 0.95 slope
+  // makes the 3 colors sweep edge-to-edge; no hard transition anywhere.
+  float m = clamp(dot(p, dir) * 0.95 + 0.5 + warp, 0.0, 1.0);
 
-  // color3 grows smoothly along the PERPENDICULAR axis (position-driven region),
-  // with the same gentle warp — a smooth corner, not scattered patches.
-  float z = clamp((dot(p, perp) + warp) * 1.3 + 0.5, 0.0, 1.0);
-  vec3 col = mix(base, uColor3, z);
+  // Clean 3-stop linear blend: color1 -> color2 -> color3 (like a CSS linear-gradient).
+  vec3 col = m < 0.5 ? mix(uColor1, uColor2, m * 2.0)
+                     : mix(uColor2, uColor3, (m - 0.5) * 2.0);
 
   if (uGrain > 0.0) col += (rand(gl_FragCoord.xy + fract(uTime)) - 0.5) * uGrain;
   fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);
