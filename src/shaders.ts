@@ -7,11 +7,10 @@
 // ShaderGradient, which sourced it from https://github.com/hughsk/glsl-noise
 // (periodic/3d.glsl, (c) Stefan Gustavson).
 //
-// The two-stage color mix `mix(mix(c1, c2, smoothstep(-3,3, x)), c3, z)` is
-// ShaderGradient's plane gradient — here evaluated in screen space on a
-// fullscreen quad (x = position along a diagonal axis, z = a normalized noise
-// field) rather than on a 3D displaced mesh, which reproduces the smooth "Halo"
-// look without a camera. See THIRD_PARTY_NOTICES.md for full attribution.
+// The N-stop linear color blend evaluates an arbitrary number of color stops
+// (2..6) using dynamic uniform-array indexing (GLSL ES 3.00), replacing the
+// original 3-stop two-stage mix. The smooth "Halo" look is preserved.
+// See THIRD_PARTY_NOTICES.md for full attribution.
 
 /** Vertex shader (WebGL2 / GLSL ES 3.00) — a single fullscreen triangle. */
 export const VERTEX_SHADER = /* glsl */ `#version 300 es
@@ -35,9 +34,8 @@ precision highp float;
 
 in vec2 vUv;
 
-uniform vec3  uColor1;
-uniform vec3  uColor2;
-uniform vec3  uColor3;
+uniform vec3  uColors[6];
+uniform int   uColorCount;
 uniform float uTime;     // seconds
 uniform float uSpeed;    // animation rate (Halo: 0.4)
 uniform float uDensity;  // noise frequency (Halo: 1.3)
@@ -137,9 +135,13 @@ void main() {
   // makes the 3 colors sweep edge-to-edge; no hard transition anywhere.
   float m = clamp(dot(p, dir) * 0.95 + 0.5 + warp, 0.0, 1.0);
 
-  // Clean 3-stop linear blend: color1 -> color2 -> color3 (like a CSS linear-gradient).
-  vec3 col = m < 0.5 ? mix(uColor1, uColor2, m * 2.0)
-                     : mix(uColor2, uColor3, (m - 0.5) * 2.0);
+  // N-stop linear blend (2..6 stops, like a CSS linear-gradient).
+  // Dynamic array indexing is valid in GLSL ES 3.00 with uniform-array indices.
+  int n = max(uColorCount, 2);
+  float seg = m * float(n - 1);
+  int i = clamp(int(floor(seg)), 0, n - 2);
+  float f = seg - float(i);
+  vec3 col = mix(uColors[i], uColors[i + 1], f);
 
   if (uGrain > 0.0) col += (rand(gl_FragCoord.xy + fract(uTime)) - 0.5) * uGrain;
   fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);

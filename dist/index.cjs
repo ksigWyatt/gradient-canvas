@@ -30,9 +30,8 @@ precision highp float;
 
 in vec2 vUv;
 
-uniform vec3  uColor1;
-uniform vec3  uColor2;
-uniform vec3  uColor3;
+uniform vec3  uColors[6];
+uniform int   uColorCount;
 uniform float uTime;     // seconds
 uniform float uSpeed;    // animation rate (Halo: 0.4)
 uniform float uDensity;  // noise frequency (Halo: 1.3)
@@ -132,9 +131,13 @@ void main() {
   // makes the 3 colors sweep edge-to-edge; no hard transition anywhere.
   float m = clamp(dot(p, dir) * 0.95 + 0.5 + warp, 0.0, 1.0);
 
-  // Clean 3-stop linear blend: color1 -> color2 -> color3 (like a CSS linear-gradient).
-  vec3 col = m < 0.5 ? mix(uColor1, uColor2, m * 2.0)
-                     : mix(uColor2, uColor3, (m - 0.5) * 2.0);
+  // N-stop linear blend (2..6 stops, like a CSS linear-gradient).
+  // Dynamic array indexing is valid in GLSL ES 3.00 with uniform-array indices.
+  int n = max(uColorCount, 2);
+  float seg = m * float(n - 1);
+  int i = clamp(int(floor(seg)), 0, n - 2);
+  float f = seg - float(i);
+  vec3 col = mix(uColors[i], uColors[i + 1], f);
 
   if (uGrain > 0.0) col += (rand(gl_FragCoord.xy + fract(uTime)) - 0.5) * uGrain;
   fragColor = vec4(clamp(col, 0.0, 1.0), uOpacity);
@@ -180,6 +183,14 @@ function GradientCanvas({
 }) {
   const canvasRef = react.useRef(null);
   const colorsKey = colors.join("|");
+  const count = Math.max(2, Math.min(6, colors.length));
+  const flatColors = new Float32Array(6 * 3);
+  for (let idx = 0; idx < count; idx++) {
+    const [r, g, b] = hexToRgb01(colors[idx]);
+    flatColors[idx * 3 + 0] = r;
+    flatColors[idx * 3 + 1] = g;
+    flatColors[idx * 3 + 2] = b;
+  }
   react.useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -202,9 +213,6 @@ function GradientCanvas({
     const prefersReducedMotion = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     const isMobile = typeof window !== "undefined" && window.innerWidth <= mobileBreakpoint;
     const staticOnly = !animate || respectReducedMotion && prefersReducedMotion || staticOnMobile && isMobile;
-    const c1 = hexToRgb01(colors[0]);
-    const c2 = hexToRgb01(colors[1]);
-    const c3 = hexToRgb01(colors[2]);
     function getDpr() {
       const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1;
       return Math.min(dpr, maxDpr);
@@ -279,9 +287,8 @@ function GradientCanvas({
       gl.uniform1f(gl.getUniformLocation(program, "uDensity"), density);
       gl.uniform1f(gl.getUniformLocation(program, "uStrength"), strength);
       gl.uniform1f(gl.getUniformLocation(program, "uAngle"), angle);
-      gl.uniform3fv(gl.getUniformLocation(program, "uColor1"), c1);
-      gl.uniform3fv(gl.getUniformLocation(program, "uColor2"), c2);
-      gl.uniform3fv(gl.getUniformLocation(program, "uColor3"), c3);
+      gl.uniform3fv(gl.getUniformLocation(program, "uColors"), flatColors);
+      gl.uniform1i(gl.getUniformLocation(program, "uColorCount"), count);
       gl.uniform1f(gl.getUniformLocation(program, "uGrain"), grain);
       gl.uniform1f(gl.getUniformLocation(program, "uOpacity"), opacity);
       if (disposed) return;

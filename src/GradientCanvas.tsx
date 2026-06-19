@@ -18,8 +18,13 @@ import type { CSSProperties } from 'react';
 import { VERTEX_SHADER, FRAGMENT_SHADER } from './shaders';
 
 export interface GradientCanvasProps {
-  /** Three gradient stop colors as hex strings, e.g. ['#ff5005', '#dbba95', '#d0bce1']. */
-  colors: [string, string, string];
+  /**
+   * 2–6 gradient stop colors as hex strings, e.g. ['#ff5005', '#dbba95', '#d0bce1'].
+   * Stops are blended left-to-right like a CSS linear-gradient. Fewer than 2 or more
+   * than 6 stops are clamped. Example with 4 stops:
+   *   ['#0f0c29', '#302b63', '#24243e', '#7b4397']
+   */
+  colors: string[];
   /** Animation speed. Default 0.4. */
   speed?: number;
   /** Perlin noise density (wave frequency). Default 1.3. */
@@ -92,6 +97,16 @@ export function GradientCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const colorsKey = colors.join('|');
 
+  // Clamp to [2, 6] stops and build a flat Float32Array for the uniform array.
+  const count = Math.max(2, Math.min(6, colors.length));
+  const flatColors = new Float32Array(6 * 3); // always 6 slots; extras are [0,0,0]
+  for (let idx = 0; idx < count; idx++) {
+    const [r, g, b] = hexToRgb01(colors[idx]);
+    flatColors[idx * 3 + 0] = r;
+    flatColors[idx * 3 + 1] = g;
+    flatColors[idx * 3 + 2] = b;
+  }
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -122,10 +137,6 @@ export function GradientCanvas({
     const isMobile = typeof window !== 'undefined' && window.innerWidth <= mobileBreakpoint;
     const staticOnly =
       !animate || (respectReducedMotion && prefersReducedMotion) || (staticOnMobile && isMobile);
-
-    const c1 = hexToRgb01(colors[0]);
-    const c2 = hexToRgb01(colors[1]);
-    const c3 = hexToRgb01(colors[2]);
 
     function getDpr(): number {
       const dpr = typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1;
@@ -220,9 +231,8 @@ export function GradientCanvas({
       gl.uniform1f(gl.getUniformLocation(program, 'uDensity'), density);
       gl.uniform1f(gl.getUniformLocation(program, 'uStrength'), strength);
       gl.uniform1f(gl.getUniformLocation(program, 'uAngle'), angle);
-      gl.uniform3fv(gl.getUniformLocation(program, 'uColor1'), c1);
-      gl.uniform3fv(gl.getUniformLocation(program, 'uColor2'), c2);
-      gl.uniform3fv(gl.getUniformLocation(program, 'uColor3'), c3);
+      gl.uniform3fv(gl.getUniformLocation(program, 'uColors'), flatColors);
+      gl.uniform1i(gl.getUniformLocation(program, 'uColorCount'), count);
       gl.uniform1f(gl.getUniformLocation(program, 'uGrain'), grain);
       gl.uniform1f(gl.getUniformLocation(program, 'uOpacity'), opacity);
 
